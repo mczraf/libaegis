@@ -236,6 +236,8 @@ encrypt_detached(uint8_t *c, uint8_t *mac, size_t maclen, const uint8_t *m, size
 
     aegis128l_mac(mac, maclen, adlen, mlen, state);
 
+    // `state` is deliberately not wiped here; see aegis_secure_zero() in common.h.
+
     return 0;
 }
 
@@ -289,6 +291,11 @@ decrypt_detached(uint8_t *m, const uint8_t *c, size_t clen, const uint8_t *mac, 
     if (ret != 0 && m != NULL) {
         memset(m, 0, mlen);
     }
+
+    aegis_secure_zero(computed_mac, sizeof computed_mac);
+    aegis_secure_zero(dst, sizeof dst);
+    // `state` is deliberately not wiped here; see aegis_secure_zero() in common.h.
+
     return ret;
 }
 
@@ -314,6 +321,8 @@ stream(uint8_t *out, size_t len, const uint8_t *npub, const uint8_t *k)
         aegis128l_enc(dst, src, state);
         memcpy(out + i, dst, len % RATE);
     }
+
+    // `state` is deliberately not wiped here; see aegis_secure_zero() in common.h.
 }
 
 static void
@@ -357,6 +366,8 @@ encrypt_unauthenticated(uint8_t *c, const uint8_t *m, size_t mlen, const uint8_t
         aegis128l_enc(dst, src, state);
         memcpy(c + i, dst, mlen % RATE);
     }
+
+    // `state` is deliberately not wiped here; see aegis_secure_zero() in common.h.
 }
 
 static void
@@ -375,6 +386,8 @@ decrypt_unauthenticated(uint8_t *m, const uint8_t *c, size_t clen, const uint8_t
     if (mlen % RATE) {
         aegis128l_declast(m + i, c + i, mlen % RATE, state);
     }
+
+    // `state` is deliberately not wiped here; see aegis_secure_zero() in common.h.
 }
 
 typedef struct _aegis128l_state {
@@ -483,6 +496,9 @@ state_encrypt_update(aegis128l_state *st_, uint8_t *c, const uint8_t *m, size_t 
         st->pos = left;
     }
 
+    // `blocks` is not wiped here even though it holds the state: it has just been written
+    // back to `st->blocks` and the next chunk resumes from it, so a wipe would erase no
+    // secret.
     memcpy(st->blocks, blocks, sizeof blocks);
 
     return 0;
@@ -508,7 +524,9 @@ state_encrypt_final(aegis128l_state *st_, uint8_t *mac, size_t maclen)
 
     aegis128l_mac(mac, maclen, st->adlen, st->mlen, blocks);
 
-    memcpy(st->blocks, blocks, sizeof blocks);
+    // An AEAD state cannot be reset and reused, so the caller's state object is wiped rather
+    // than written back. The local `blocks` copy is left alone; see common.h.
+    aegis_secure_zero(st, sizeof *st);
 
     return 0;
 }
@@ -590,6 +608,9 @@ state_decrypt_update(aegis128l_state *st_, uint8_t *m, const uint8_t *c, size_t 
         st->pos = left;
     }
 
+    // `blocks` is not wiped here even though it holds the state: it has just been written
+    // back to `st->blocks` and the next chunk resumes from it, so a wipe would erase no
+    // secret.
     memcpy(st->blocks, blocks, sizeof blocks);
 
     return 0;
@@ -623,7 +644,10 @@ state_decrypt_final(aegis128l_state *st_, const uint8_t *mac, size_t maclen)
         ret = aegis_verify_32(computed_mac, mac);
     }
 
-    memcpy(st->blocks, blocks, sizeof blocks);
+    aegis_secure_zero(computed_mac, sizeof computed_mac);
+    // An AEAD state cannot be reset and reused, so the caller's state object is wiped rather
+    // than written back. The local `blocks` copy is left alone; see common.h.
+    aegis_secure_zero(st, sizeof *st);
 
     return ret;
 }
@@ -721,6 +745,9 @@ state_mac_final(aegis128l_mac_state *st_, uint8_t *mac, size_t maclen)
     }
     aegis128l_mac(mac, maclen, st->adlen, maclen, blocks);
 
+    // `blocks` is not wiped here: a MAC state stays usable after finalization, since
+    // aegis128l_mac_reset() restores it from `blocks0`, so the value written back is
+    // still live.
     memcpy(st->blocks, blocks, sizeof blocks);
 
     return 0;
